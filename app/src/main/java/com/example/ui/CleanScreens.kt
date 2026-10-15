@@ -4,9 +4,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,22 +30,33 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Segment
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -51,6 +65,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,7 +73,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +82,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentRed
@@ -217,12 +232,13 @@ fun TokenCleanScreen(
 }
 
 /**
- * Screen 2: Clean screen with ONLY ONE button to select ZIP file.
+ * Screen 2: Clean screen with ONE primary button to select ZIP, plus History button in header.
  */
 @Composable
 fun SelectZipCleanScreen(
     state: BuildUiState,
     onSelectZipClick: () -> Unit,
+    onHistoryClick: () -> Unit,
     onChangeTokenClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -230,74 +246,111 @@ fun SelectZipCleanScreen(
         modifier = modifier.fillMaxSize(),
         color = TerminalBlack
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .statusBarsPadding()
         ) {
-            // Center Content: One big clean button
-            Column(
+            // Minimal Header with History button
+            Row(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(AccentEmerald.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.FolderZip,
-                        contentDescription = "Selecionar arquivo",
-                        tint = AccentEmerald,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(28.dp))
-
                 Button(
-                    onClick = onSelectZipClick,
-                    shape = RoundedCornerShape(16.dp),
+                    onClick = onHistoryClick,
+                    shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = AccentEmerald,
-                        contentColor = Color(0xFF042114)
+                        containerColor = Color(0xFF161E28),
+                        contentColor = TextPrimary
                     ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp)
-                        .testTag("select_zip_button")
+                    modifier = Modifier.testTag("open_history_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.FolderZip,
+                        imageVector = Icons.Default.History,
                         contentDescription = null,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(16.dp),
+                        tint = AccentCyan
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Selecionar Arquivo ZIP",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        text = if (state.historyList.isNotEmpty()) "Histórico (${state.historyList.size})" else "Histórico",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            // Center Content: One big clean button
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(80.dp)
+                            .clip(CircleShape)
+                            .background(AccentEmerald.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderZip,
+                            contentDescription = "Selecionar arquivo",
+                            tint = AccentEmerald,
+                            modifier = Modifier.size(40.dp)
+                        )
+                    }
 
-                Text(
-                    text = "A compilação iniciará automaticamente após a seleção.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMuted
-                )
+                    Spacer(modifier = Modifier.height(28.dp))
+
+                    Button(
+                        onClick = onSelectZipClick,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentEmerald,
+                            contentColor = Color(0xFF042114)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp)
+                            .testTag("select_zip_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderZip,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Selecionar Arquivo ZIP",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "A compilação roda em segundo plano mesmo se sair do app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted
+                    )
+                }
             }
 
             // Bottom subtle metadata & option to change token
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
                     .navigationBarsPadding()
                     .padding(bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -328,21 +381,32 @@ fun SelectZipCleanScreen(
 }
 
 /**
- * Screen 3: Fullscreen logs showing all compilation logs in real time.
- * In the end:
- * - "Baixar APK" button in case of success and valid artifact
- * - "Copiar Todos os Logs" button in case of success or failure
+ * Screen 3: Organized compilation logs screen.
+ * Displays logs organized by clean, expandable STAGES so the user never gets confused,
+ * with option to switch to raw terminal view.
  */
 @Composable
 fun LogsCleanScreen(
     state: BuildUiState,
     onBackClick: () -> Unit,
+    onToggleViewMode: () -> Unit,
     onDownloadApkClick: () -> Unit,
     onCopyLogsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberLazyListState()
+    val rawListState = rememberLazyListState()
     BackHandler { onBackClick() }
+
+    val expandedStages = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Auto-expand stage in progress
+    LaunchedEffect(state.stages) {
+        state.stages.forEach { stage ->
+            if (stage.status == StageStatus.IN_PROGRESS) {
+                expandedStages[stage.key] = true
+            }
+        }
+    }
 
     val logLines = remember(state.logsText) {
         if (state.logsText.isEmpty()) emptyList()
@@ -350,8 +414,8 @@ fun LogsCleanScreen(
     }
 
     LaunchedEffect(logLines.size) {
-        if (logLines.isNotEmpty()) {
-            listState.animateScrollToItem(logLines.size - 1)
+        if (logLines.isNotEmpty() && state.logViewMode == LogViewMode.RAW_LOGS) {
+            rawListState.animateScrollToItem(logLines.size - 1)
         }
     }
 
@@ -392,7 +456,7 @@ fun LogsCleanScreen(
                     Spacer(modifier = Modifier.width(4.dp))
                     Column {
                         Text(
-                            text = "Logs da Compilação",
+                            text = "Compilação Android",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -410,15 +474,51 @@ fun LogsCleanScreen(
                     }
                 }
 
-                IconButton(
-                    onClick = onCopyLogsClick,
-                    modifier = Modifier.testTag("copy_logs_header_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copiar logs",
-                        tint = TextSecondary
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Toggle View Mode (Stages vs Raw Logs)
+                    FilterChip(
+                        selected = state.logViewMode == LogViewMode.STAGES,
+                        onClick = onToggleViewMode,
+                        label = {
+                            Text(
+                                text = if (state.logViewMode == LogViewMode.STAGES) "Etapas" else "Bruto",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (state.logViewMode == LogViewMode.STAGES) Icons.Default.Segment else Icons.Default.Terminal,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AccentCyan.copy(alpha = 0.2f),
+                            selectedLabelColor = AccentCyan,
+                            selectedLeadingIconColor = AccentCyan,
+                            containerColor = Color(0xFF161E28),
+                            labelColor = TextMuted,
+                            iconColor = TextMuted
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = state.logViewMode == LogViewMode.STAGES,
+                            borderColor = if (state.logViewMode == LogViewMode.STAGES) AccentCyan else TerminalCardBorder
+                        ),
+                        modifier = Modifier.padding(end = 4.dp).testTag("toggle_view_mode_chip")
                     )
+
+                    IconButton(
+                        onClick = onCopyLogsClick,
+                        modifier = Modifier.testTag("copy_logs_header_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copiar logs",
+                            tint = TextSecondary
+                        )
+                    }
                 }
             }
 
@@ -431,71 +531,94 @@ fun LogsCleanScreen(
                 )
             }
 
-            // Terminal Log Viewer
+            // Main Body: Either Organized Stages or Raw Terminal
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .background(TerminalBlack)
             ) {
-                if (logLines.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                if (state.logViewMode == LogViewMode.STAGES) {
+                    // ORGANIZED STAGES VIEW
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("stages_list"),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = AccentCyan, strokeWidth = 3.dp)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "Iniciando compilação no GitHub Actions...",
-                                color = TextSecondary,
-                                style = MaterialTheme.typography.bodyMedium
+                        items(state.stages, key = { it.key }) { stage ->
+                            val isExpanded = expandedStages[stage.key] ?: (stage.status == StageStatus.IN_PROGRESS)
+                            StageCard(
+                                stage = stage,
+                                isExpanded = isExpanded,
+                                onToggleExpand = {
+                                    expandedStages[stage.key] = !isExpanded
+                                }
                             )
                         }
                     }
                 } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(8.dp)
-                            .testTag("logs_list")
-                    ) {
-                        itemsIndexed(logLines) { index, line ->
-                            val isError = line.contains("ERROR", ignoreCase = true) ||
-                                    line.contains("FAILURE", ignoreCase = true) ||
-                                    line.contains("FAILED", ignoreCase = true) ||
-                                    line.startsWith("[FALHA]") || line.startsWith("[ERRO]")
-                            val isSuccess = line.contains("SUCCESSFUL", ignoreCase = true) ||
-                                    line.startsWith("[SUCESSO]")
-                            val isHeader = line.startsWith(">>>")
-
-                            val color = when {
-                                isError -> AccentRed
-                                isSuccess -> AccentEmerald
-                                isHeader -> AccentCyan
-                                else -> TextPrimary
+                    // RAW TERMINAL VIEW
+                    if (logLines.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = AccentCyan, strokeWidth = 3.dp)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Iniciando compilação no GitHub Actions...",
+                                    color = TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
                             }
+                        }
+                    } else {
+                        LazyColumn(
+                            state = rawListState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                                .testTag("raw_logs_list")
+                        ) {
+                            itemsIndexed(logLines) { index, line ->
+                                val isError = line.contains("ERROR", ignoreCase = true) ||
+                                        line.contains("FAILURE", ignoreCase = true) ||
+                                        line.contains("FAILED", ignoreCase = true) ||
+                                        line.startsWith("[FALHA]") || line.startsWith("[ERRO]")
+                                val isSuccess = line.contains("SUCCESSFUL", ignoreCase = true) ||
+                                        line.startsWith("[SUCESSO]")
+                                val isHeader = line.startsWith(">>>")
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = String.format(java.util.Locale.US, "%4d ", index + 1),
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    color = TextMuted
-                                )
-                                Text(
-                                    text = line,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    color = color,
-                                    lineHeight = 15.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                val color = when {
+                                    isError -> AccentRed
+                                    isSuccess -> AccentEmerald
+                                    isHeader -> AccentCyan
+                                    else -> TextPrimary
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = String.format(java.util.Locale.US, "%4d ", index + 1),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = TextMuted
+                                    )
+                                    Text(
+                                        text = line,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = color,
+                                        lineHeight = 15.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -599,6 +722,133 @@ fun LogsCleanScreen(
                             text = "Selecionar Outro Arquivo",
                             color = TextMuted,
                             fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Clean Stage Card that organizes logs by step.
+ */
+@Composable
+private fun StageCard(
+    stage: BuildStageItem,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit
+) {
+    val (statusIcon, statusColor, statusLabel) = when (stage.status) {
+        StageStatus.SUCCESS -> Triple(Icons.Default.CheckCircle, AccentEmerald, "Concluído")
+        StageStatus.IN_PROGRESS -> Triple(Icons.Default.HourglassEmpty, AccentCyan, "Em andamento")
+        StageStatus.FAILURE -> Triple(Icons.Default.Error, AccentRed, "Falhou")
+        StageStatus.PENDING -> Triple(Icons.Default.HourglassEmpty, TextMuted, "Pendente")
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                1.dp,
+                if (stage.status == StageStatus.IN_PROGRESS) AccentCyan.copy(alpha = 0.5f) else TerminalCardBorder,
+                RoundedCornerShape(12.dp)
+            ),
+        colors = CardDefaults.cardColors(containerColor = TerminalCardBg)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleExpand() }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (stage.status == StageStatus.IN_PROGRESS) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = AccentCyan,
+                            strokeWidth = 2.5.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column {
+                        Text(
+                            text = stage.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "${stage.subtitle} • $statusLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = statusColor,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (stage.lines.isNotEmpty()) {
+                        Text(
+                            text = "${stage.lines.size} linhas",
+                            fontSize = 11.sp,
+                            color = TextMuted,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    }
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Recolher" else "Expandir",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // Expanded Stage Log Content
+            AnimatedVisibility(visible = isExpanded && stage.lines.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF090D12))
+                        .border(1.dp, Color(0xFF1B232D))
+                        .padding(12.dp)
+                ) {
+                    stage.lines.forEachIndexed { i, line ->
+                        val isErr = line.contains("error", ignoreCase = true) ||
+                                line.contains("fail", ignoreCase = true) ||
+                                line.startsWith("[FALHA]") || line.startsWith("[ERRO]")
+                        val isOk = line.contains("success", ignoreCase = true) ||
+                                line.startsWith("[SUCESSO]")
+                        val textColor = when {
+                            isErr -> AccentRed
+                            isOk -> AccentEmerald
+                            else -> TextSecondary
+                        }
+                        Text(
+                            text = line,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = textColor,
+                            lineHeight = 15.sp,
+                            modifier = Modifier.padding(vertical = 1.dp)
                         )
                     }
                 }

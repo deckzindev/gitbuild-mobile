@@ -11,6 +11,10 @@ import com.example.data.GitHubUser
 import com.example.data.TokenStorage
 import com.example.data.WorkflowJob
 import com.example.data.WorkflowRun
+import com.example.data.db.AppDatabase
+import com.example.data.db.BuildRecord
+import com.example.data.db.BuildRepository
+import com.example.service.BuildForegroundService
 import com.example.util.ApkHelper
 import com.example.util.ProjectAnalysis
 import com.example.util.ZipHelper
@@ -23,12 +27,19 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 import kotlin.random.Random
 
 enum class AppScreen {
     TOKEN,
     SELECT_ZIP,
-    LOGS
+    LOGS,
+    HISTORY
+}
+
+enum class LogViewMode {
+    STAGES,
+    RAW_LOGS
 }
 
 enum class BuildPhase {
@@ -44,6 +55,7 @@ enum class BuildPhase {
 
 data class BuildUiState(
     val currentScreen: AppScreen = AppScreen.TOKEN,
+    val logViewMode: LogViewMode = LogViewMode.STAGES,
     val tokenInput: String = "",
     val isSavingToken: Boolean = false,
     val tokenUser: GitHubUser? = null,
@@ -63,18 +75,25 @@ data class BuildUiState(
     val logsText: String = "",
     val elapsedSeconds: Long = 0,
 
+    val stages: List<BuildStageItem> = emptyList(),
+
     val artifacts: List<ArtifactItem> = emptyList(),
     val validApkArtifact: ArtifactItem? = null,
     val isDownloadingApk: Boolean = false,
     val downloadPercent: Int = 0,
     val downloadedApkFile: File? = null,
-    val generalError: String? = null
+    val generalError: String? = null,
+
+    val historyList: List<BuildRecord> = emptyList(),
+    val activeHistoryRecord: BuildRecord? = null
 )
 
 class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
     private val tokenStorage = TokenStorage(application)
     private val gitHubClient = GitHubApiClient()
+    private val database = AppDatabase.getDatabase(application)
+    private val buildRepository = BuildRepository(database.buildRecordDao())
 
     private val _uiState = MutableStateFlow(BuildUiState())
     val uiState: StateFlow<BuildUiState> = _uiState.asStateFlow()
@@ -84,6 +103,13 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
     private val baseLogs = StringBuilder()
 
     init {
+        // Collect build history
+        viewModelScope.launch {
+            buildRepository.allBuilds.collect { builds ->
+                _uiState.update { it.copy(historyList = builds) }
+            }
+        }
+
         val savedToken = tokenStorage.getToken()
         val savedUsername = tokenStorage.getUsername()
         val savedAvatar = tokenStorage.getAvatarUrl()
@@ -116,6 +142,56 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(tokenInput = token, tokenError = null) }
     }
 
+    fun toggleLogViewMode() {
+        _uiState.update {
+            it.copy(
+                logViewMode = if (it.logViewMode == LogViewMode.STAGES) LogViewMode.RAW_LOGS else LogViewMode.STAGES
+            )
+        }
+    }
+
+    fun goToHistoryScreen() {
+        _uiState.update { it.copy(currentScreen = AppScreen.HISTORY) }
+    }
+
+    fun openHistoryRecord(record: BuildRecord) {
+        val artifactItem = if (record.artifactId != null && record.artifactDownloadUrl != null) {
+            ArtifactItem(
+                id = record.artifactId,
+                name = record.apkFileName ?: "app-debug.apk",
+                sizeInBytes = record.artifactSize ?: 0,
+                archiveDownloadUrl = record.artifactDownloadUrl
+            )
+        } else null
+
+        val phase = when (record.status) {
+            "SUCCESS" -> BuildPhase.COMPLETED_SUCCESS
+            "FAILURE" -> BuildPhase.COMPLETED_FAILURE
+            else -> BuildPhase.IN_PROGRESS
+        }
+
+        val stages = StageParser.parseStages(record.logsText, phase)
+
+        _uiState.update {
+            it.copy(
+                currentScreen = AppScreen.LOGS,
+                buildPhase = phase,
+                buildStatusMessage = if (phase == BuildPhase.COMPLETED_SUCCESS) "Compilação concluída com sucesso!" else "Compilação finalizou com erro",
+                logsText = record.logsText,
+                elapsedSeconds = record.elapsedSeconds,
+                validApkArtifact = artifactItem,
+                stages = stages,
+                activeHistoryRecord = record
+            )
+        }
+    }
+
+    fun deleteHistoryRecord(id: String) {
+        viewModelScope.launch {
+            buildRepository.deleteBuild(id)
+        }
+    }
+
     fun saveTokenAndCreateRepo() {
         val token = _uiState.value.tokenInput.trim()
         if (token.isBlank()) {
@@ -126,7 +202,6 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSavingToken = true, tokenError = null) }
 
-            // 1. Verify token
             val verifyResult = gitHubClient.verifyToken(token)
             if (verifyResult.isFailure) {
                 _uiState.update {
@@ -140,13 +215,11 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
             val user = verifyResult.getOrThrow()
 
-            // 2. Generate random repo name and create it automatically on GitHub
             val randomSuffix = Random.nextInt(100000, 999999)
             val randomRepoName = "apk-builder-$randomSuffix"
 
             val repoResult = gitHubClient.createRandomRepo(token, randomRepoName)
             if (repoResult.isFailure) {
-                // If random creation failed (e.g., name collision or fine-grained token scope), fallback to getOrCreateRepo
                 val fallbackResult = gitHubClient.getOrCreateRepo(token, user.login, randomRepoName)
                 if (fallbackResult.isFailure) {
                     _uiState.update {
@@ -159,7 +232,6 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // 3. Save credentials and transition to Select File Screen
             tokenStorage.saveToken(token)
             tokenStorage.saveUserInfo(user)
             tokenStorage.saveTargetRepo(randomRepoName)
@@ -188,6 +260,8 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             baseLogs.clear()
             baseLogs.append(">>> Arquivo ZIP selecionado. Processando código-fonte...\n")
+            val initialStages = StageParser.parseStages(baseLogs.toString(), BuildPhase.PREPARING)
+
             _uiState.update {
                 it.copy(
                     isReadingZip = true,
@@ -195,26 +269,33 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                     buildPhase = BuildPhase.PREPARING,
                     buildStatusMessage = "Lendo arquivo ZIP...",
                     logsText = baseLogs.toString(),
+                    stages = initialStages,
                     elapsedSeconds = 0,
                     workflowRun = null,
                     jobs = emptyList(),
                     artifacts = emptyList(),
                     validApkArtifact = null,
-                    downloadedApkFile = null
+                    downloadedApkFile = null,
+                    activeHistoryRecord = null
                 )
             }
 
+            // Start background foreground service so compilation runs safely even if user leaves app
             val context = getApplication<Application>()
+            BuildForegroundService.startService(context, "Lendo e preparando arquivos do projeto...")
+
             val result = ZipHelper.readZipFromUri(context, uri)
 
             if (result.isFailure) {
                 val err = result.exceptionOrNull()?.localizedMessage ?: "Falha ao ler o arquivo ZIP."
                 appendLog("[ERRO]: $err")
+                BuildForegroundService.finishService(context, false, "Projeto", "Falha ao ler arquivo ZIP")
                 _uiState.update {
                     it.copy(
                         isReadingZip = false,
                         buildPhase = BuildPhase.ERROR,
-                        buildStatusMessage = err
+                        buildStatusMessage = err,
+                        stages = StageParser.parseStages(baseLogs.toString(), BuildPhase.ERROR)
                     )
                 }
                 return@launch
@@ -235,7 +316,6 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog(">>> Aviso: Arquivo Gradle não encontrado na raiz; tentando compilação...")
             }
 
-            // Immediately launch build!
             startBuild()
         }
     }
@@ -284,8 +364,10 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
         repoName: String,
         project: ProjectAnalysis
     ) {
+        val context = getApplication<Application>()
         try {
             appendLog(">>> Repositório alvo: $owner/$repoName")
+            BuildForegroundService.updateStatus(context, "Enviando código-fonte para o GitHub...")
             _uiState.update {
                 it.copy(
                     buildPhase = BuildPhase.UPLOADING,
@@ -307,6 +389,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                             uploadTotal = total
                         )
                     }
+                    BuildForegroundService.updateStatus(context, "$status ($current/$total)")
                 }
             )
 
@@ -314,6 +397,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
             appendLog(">>> Commit criado com sucesso: ${commitSha.take(8)}")
             appendLog(">>> Disparando GitHub Actions na branch main...")
 
+            BuildForegroundService.updateStatus(context, "Aguardando GitHub Actions...")
             _uiState.update {
                 it.copy(
                     commitSha = commitSha,
@@ -322,19 +406,29 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            // Start polling for workflow run and streaming logs
-            pollWorkflowAndStreamLogs(token, owner, repoName, commitSha)
+            pollWorkflowAndStreamLogs(token, owner, repoName, commitSha, project)
 
         } catch (e: Exception) {
             timerJob?.cancel()
             val msg = e.localizedMessage ?: "Erro durante o envio ao GitHub."
             appendLog("\n[FALHA]: $msg")
+            BuildForegroundService.finishService(context, false, project.fileName, "Falha na compilação: $msg")
             _uiState.update {
                 it.copy(
                     buildPhase = BuildPhase.ERROR,
-                    buildStatusMessage = "Falha: $msg"
+                    buildStatusMessage = "Falha: $msg",
+                    stages = StageParser.parseStages(baseLogs.toString(), BuildPhase.ERROR)
                 )
             }
+            saveHistoryRecord(
+                id = UUID.randomUUID().toString(),
+                projectName = project.fileName,
+                repoName = repoName,
+                status = "FAILURE",
+                elapsed = _uiState.value.elapsedSeconds,
+                logs = baseLogs.toString(),
+                artifact = null
+            )
         }
     }
 
@@ -342,13 +436,14 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
         token: String,
         owner: String,
         repoName: String,
-        commitSha: String
+        commitSha: String,
+        project: ProjectAnalysis
     ) {
+        val context = getApplication<Application>()
         buildPollingJob = viewModelScope.launch {
             var runId: Long? = null
             var retryCount = 0
 
-            // 1. Wait for workflow run to appear for this commit
             while (isActive && runId == null && retryCount < 30) {
                 delay(2500)
                 val runResult = gitHubClient.findWorkflowRunForCommit(token, owner, repoName, commitSha)
@@ -362,6 +457,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     appendLog(">>> GitHub Actions iniciou o build #${run.runNumber ?: run.id} (Run ID: ${run.id}).")
+                    BuildForegroundService.updateStatus(context, "Executando build #${run.runNumber ?: run.id} no GitHub Actions...")
                     break
                 }
                 retryCount++
@@ -371,28 +467,27 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
             if (runId == null) {
                 timerJob?.cancel()
                 appendLog("\n[ERRO]: Tempo limite excedido aguardando o GitHub Actions.")
+                BuildForegroundService.finishService(context, false, project.fileName, "Tempo limite excedido")
                 _uiState.update {
                     it.copy(
                         buildPhase = BuildPhase.ERROR,
-                        buildStatusMessage = "Tempo limite excedido."
+                        buildStatusMessage = "Tempo limite excedido.",
+                        stages = StageParser.parseStages(baseLogs.toString(), BuildPhase.ERROR)
                     )
                 }
                 return@launch
             }
 
-            // 2. Poll workflow run status and job logs
             var completed = false
             var activeJobId: Long? = null
 
             while (isActive && !completed) {
                 delay(3000)
 
-                // Get run status
                 val runResult = gitHubClient.getWorkflowRun(token, owner, repoName, runId)
                 val currentRun = runResult.getOrNull() ?: continue
                 _uiState.update { it.copy(workflowRun = currentRun) }
 
-                // Get jobs
                 val jobsResult = gitHubClient.getWorkflowJobs(token, owner, repoName, runId)
                 val jobs = jobsResult.getOrDefault(emptyList())
                 if (jobs.isNotEmpty()) {
@@ -404,6 +499,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                 val conclusion = currentRun.conclusion?.lowercase()
 
                 if (status == "in_progress") {
+                    BuildForegroundService.updateStatus(context, "Compilando APK no runner Ubuntu...")
                     _uiState.update {
                         it.copy(
                             buildPhase = BuildPhase.IN_PROGRESS,
@@ -412,28 +508,37 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // If job ID is available, try fetching live logs
                 var fetchedLiveLogs = false
                 if (activeJobId != null) {
                     val logsResult = gitHubClient.getJobLogs(token, owner, repoName, activeJobId)
                     val rawLogs = logsResult.getOrNull()
                     if (!rawLogs.isNullOrBlank()) {
                         fetchedLiveLogs = true
-                        _uiState.update { it.copy(logsText = cleanAnsiCodes(rawLogs)) }
+                        val cleaned = cleanAnsiCodes(rawLogs)
+                        _uiState.update {
+                            it.copy(
+                                logsText = cleaned,
+                                stages = StageParser.parseStages(cleaned, BuildPhase.IN_PROGRESS)
+                            )
+                        }
                     }
                 }
 
-                // While logs are not yet available from GitHub, show live step progress
                 if (!fetchedLiveLogs && jobs.isNotEmpty()) {
                     val liveStepsText = buildLiveStepsLog(baseLogs.toString(), currentRun, jobs)
-                    _uiState.update { it.copy(logsText = liveStepsText) }
+                    _uiState.update {
+                        it.copy(
+                            logsText = liveStepsText,
+                            stages = StageParser.parseStages(liveStepsText, BuildPhase.IN_PROGRESS)
+                        )
+                    }
                 }
 
                 if (status == "completed") {
                     completed = true
                     timerJob?.cancel()
 
-                    // Final fetch of logs (retry for up to 12s as GitHub finalizes the log file)
+                    var finalLogsText = _uiState.value.logsText
                     if (activeJobId != null) {
                         var finalLogs: String? = null
                         for (attempt in 1..8) {
@@ -443,14 +548,14 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                             delay(1500)
                         }
                         if (!finalLogs.isNullOrBlank()) {
-                            _uiState.update { it.copy(logsText = cleanAnsiCodes(finalLogs)) }
+                            finalLogsText = cleanAnsiCodes(finalLogs)
+                            _uiState.update { it.copy(logsText = finalLogsText) }
                         } else {
-                            val finalSummary = buildLiveStepsLog(baseLogs.toString(), currentRun, jobs)
-                            _uiState.update { it.copy(logsText = finalSummary) }
+                            finalLogsText = buildLiveStepsLog(baseLogs.toString(), currentRun, jobs)
+                            _uiState.update { it.copy(logsText = finalLogsText) }
                         }
                     }
 
-                    // Check artifacts
                     appendLog("\n>>> Verificando artefato APK gerado...")
                     val artifactsResult = gitHubClient.getArtifacts(token, owner, repoName, runId)
                     val artifacts = artifactsResult.getOrDefault(emptyList())
@@ -458,35 +563,71 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                         it.name.contains("apk", ignoreCase = true) && !it.expired
                     }
 
+                    val finalPhase = if (conclusion == "success") BuildPhase.COMPLETED_SUCCESS else BuildPhase.COMPLETED_FAILURE
+                    val finalMessage = if (conclusion == "success") "Compilação concluída com sucesso!" else "Compilação falhou ($conclusion)."
+
                     if (conclusion == "success") {
                         appendLog("\n[SUCESSO] Compilação concluída com sucesso!")
                         if (apkArtifact != null) {
                             appendLog(">>> APK disponível: ${apkArtifact.name} (${ZipHelper.formatBytes(apkArtifact.sizeInBytes)})")
-                        } else {
-                            appendLog(">>> Nenhum arquivo APK foi gerado na saída.")
                         }
-
-                        _uiState.update {
-                            it.copy(
-                                buildPhase = BuildPhase.COMPLETED_SUCCESS,
-                                buildStatusMessage = "Compilação concluída com sucesso!",
-                                artifacts = artifacts,
-                                validApkArtifact = apkArtifact
-                            )
-                        }
+                        BuildForegroundService.finishService(context, true, project.fileName, "APK gerado com sucesso!")
                     } else {
                         appendLog("\n[FALHA NA COMPILAÇÃO] Conclusão: $conclusion")
-                        _uiState.update {
-                            it.copy(
-                                buildPhase = BuildPhase.COMPLETED_FAILURE,
-                                buildStatusMessage = "Compilação falhou ($conclusion).",
-                                artifacts = artifacts,
-                                validApkArtifact = apkArtifact
-                            )
-                        }
+                        BuildForegroundService.finishService(context, false, project.fileName, "Compilação finalizou com erro")
                     }
+
+                    val finalStages = StageParser.parseStages(finalLogsText, finalPhase)
+
+                    _uiState.update {
+                        it.copy(
+                            buildPhase = finalPhase,
+                            buildStatusMessage = finalMessage,
+                            artifacts = artifacts,
+                            validApkArtifact = apkArtifact,
+                            stages = finalStages
+                        )
+                    }
+
+                    // Save to Room history
+                    saveHistoryRecord(
+                        id = commitSha,
+                        projectName = project.fileName,
+                        repoName = repoName,
+                        status = if (conclusion == "success") "SUCCESS" else "FAILURE",
+                        elapsed = _uiState.value.elapsedSeconds,
+                        logs = finalLogsText,
+                        artifact = apkArtifact
+                    )
                 }
             }
+        }
+    }
+
+    private fun saveHistoryRecord(
+        id: String,
+        projectName: String,
+        repoName: String,
+        status: String,
+        elapsed: Long,
+        logs: String,
+        artifact: ArtifactItem?
+    ) {
+        viewModelScope.launch {
+            val record = BuildRecord(
+                id = id,
+                projectName = projectName,
+                repoName = repoName,
+                status = status,
+                elapsedSeconds = elapsed,
+                timestamp = System.currentTimeMillis(),
+                logsText = logs,
+                artifactId = artifact?.id,
+                artifactDownloadUrl = artifact?.archiveDownloadUrl,
+                artifactSize = artifact?.sizeInBytes,
+                apkFileName = artifact?.name
+            )
+            buildRepository.saveBuild(record)
         }
     }
 
@@ -542,7 +683,11 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
     private fun appendLog(line: String) {
         baseLogs.append(line).append("\n")
         _uiState.update {
-            it.copy(logsText = baseLogs.toString())
+            val text = baseLogs.toString()
+            it.copy(
+                logsText = text,
+                stages = StageParser.parseStages(text, it.buildPhase)
+            )
         }
     }
 

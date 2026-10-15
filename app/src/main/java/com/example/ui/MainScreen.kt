@@ -46,6 +46,7 @@ fun MainScreen(
                         )
                     )
                 },
+                onHistoryClick = viewModel::goToHistoryScreen,
                 onChangeTokenClick = viewModel::goToTokenScreen,
                 modifier = modifier
             )
@@ -54,8 +55,18 @@ fun MainScreen(
             LogsCleanScreen(
                 state = state,
                 onBackClick = viewModel::goToSelectZipScreen,
+                onToggleViewMode = viewModel::toggleLogViewMode,
                 onDownloadApkClick = { viewModel.downloadAndOpenApk(context) },
                 onCopyLogsClick = { viewModel.copyLogsToClipboard(context) },
+                modifier = modifier
+            )
+        }
+        AppScreen.HISTORY -> {
+            HistoryCleanScreen(
+                state = state,
+                onBackClick = viewModel::goToSelectZipScreen,
+                onOpenRecord = viewModel::openHistoryRecord,
+                onDeleteRecord = viewModel::deleteHistoryRecord,
                 modifier = modifier
             )
         }
