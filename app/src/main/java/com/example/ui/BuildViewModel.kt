@@ -81,6 +81,7 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
     private var buildPollingJob: Job? = null
     private var timerJob: Job? = null
+    private val baseLogs = StringBuilder()
 
     init {
         val savedToken = tokenStorage.getToken()
@@ -185,13 +186,15 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onZipSelected(uri: Uri) {
         viewModelScope.launch {
+            baseLogs.clear()
+            baseLogs.append(">>> Arquivo ZIP selecionado. Processando código-fonte...\n")
             _uiState.update {
                 it.copy(
                     isReadingZip = true,
                     currentScreen = AppScreen.LOGS,
                     buildPhase = BuildPhase.PREPARING,
                     buildStatusMessage = "Lendo arquivo ZIP...",
-                    logsText = ">>> Arquivo ZIP selecionado. Processando código-fonte...\n",
+                    logsText = baseLogs.toString(),
                     elapsedSeconds = 0,
                     workflowRun = null,
                     jobs = emptyList(),
@@ -397,15 +400,6 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                     activeJobId = jobs.firstOrNull()?.id ?: activeJobId
                 }
 
-                // If job ID is available, fetch live logs
-                if (activeJobId != null) {
-                    val logsResult = gitHubClient.getJobLogs(token, owner, repoName, activeJobId)
-                    val rawLogs = logsResult.getOrNull()
-                    if (!rawLogs.isNullOrBlank()) {
-                        _uiState.update { it.copy(logsText = cleanAnsiCodes(rawLogs)) }
-                    }
-                }
-
                 val status = currentRun.status?.lowercase()
                 val conclusion = currentRun.conclusion?.lowercase()
 
@@ -418,16 +412,41 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
+                // If job ID is available, try fetching live logs
+                var fetchedLiveLogs = false
+                if (activeJobId != null) {
+                    val logsResult = gitHubClient.getJobLogs(token, owner, repoName, activeJobId)
+                    val rawLogs = logsResult.getOrNull()
+                    if (!rawLogs.isNullOrBlank()) {
+                        fetchedLiveLogs = true
+                        _uiState.update { it.copy(logsText = cleanAnsiCodes(rawLogs)) }
+                    }
+                }
+
+                // While logs are not yet available from GitHub, show live step progress
+                if (!fetchedLiveLogs && jobs.isNotEmpty()) {
+                    val liveStepsText = buildLiveStepsLog(baseLogs.toString(), currentRun, jobs)
+                    _uiState.update { it.copy(logsText = liveStepsText) }
+                }
+
                 if (status == "completed") {
                     completed = true
                     timerJob?.cancel()
 
-                    // Final fetch of logs
+                    // Final fetch of logs (retry for up to 12s as GitHub finalizes the log file)
                     if (activeJobId != null) {
-                        val finalLogsResult = gitHubClient.getJobLogs(token, owner, repoName, activeJobId)
-                        val finalLogs = finalLogsResult.getOrNull()
+                        var finalLogs: String? = null
+                        for (attempt in 1..8) {
+                            val finalLogsResult = gitHubClient.getJobLogs(token, owner, repoName, activeJobId)
+                            finalLogs = finalLogsResult.getOrNull()
+                            if (!finalLogs.isNullOrBlank()) break
+                            delay(1500)
+                        }
                         if (!finalLogs.isNullOrBlank()) {
                             _uiState.update { it.copy(logsText = cleanAnsiCodes(finalLogs)) }
+                        } else {
+                            val finalSummary = buildLiveStepsLog(baseLogs.toString(), currentRun, jobs)
+                            _uiState.update { it.copy(logsText = finalSummary) }
                         }
                     }
 
@@ -521,9 +540,50 @@ class BuildViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun appendLog(line: String) {
+        baseLogs.append(line).append("\n")
         _uiState.update {
-            it.copy(logsText = it.logsText + line + "\n")
+            it.copy(logsText = baseLogs.toString())
         }
+    }
+
+    private fun buildLiveStepsLog(
+        base: String,
+        currentRun: WorkflowRun?,
+        jobs: List<WorkflowJob>
+    ): String {
+        val sb = StringBuilder(base.trimEnd())
+        sb.append("\n\n------------------------------------------------------------\n")
+        val runNum = currentRun?.runNumber ?: currentRun?.id ?: 0
+        val runStatus = currentRun?.status ?: "in_progress"
+        sb.append(">>> GITHUB ACTIONS: Execução #$runNum (Status: $runStatus)\n")
+
+        val firstJob = jobs.firstOrNull()
+        if (firstJob != null) {
+            sb.append(">>> Runner: Ubuntu 24.04 (GitHub Cloud) • Job: ${firstJob.name}\n\n")
+            if (firstJob.steps.isNotEmpty()) {
+                sb.append(">>> ETAPAS DA COMPILAÇÃO:\n")
+                firstJob.steps.forEach { step ->
+                    val icon = when (step.conclusion) {
+                        "success" -> "[✓]"
+                        "failure" -> "[✗]"
+                        "skipped" -> "[-]"
+                        else -> if (step.status == "in_progress") "[▶]" else "[ ]"
+                    }
+                    val statusText = when {
+                        step.conclusion != null -> step.conclusion
+                        step.status == "in_progress" -> "executando..."
+                        else -> "aguardando"
+                    }
+                    sb.append(String.format(java.util.Locale.US, "  %-3s %-32s (%s)\n", icon, step.name, statusText))
+                }
+            } else {
+                sb.append(">>> Inicializando ambiente de compilação...\n")
+            }
+        } else {
+            sb.append(">>> Alocando máquina virtual runner no GitHub Actions...\n")
+        }
+        sb.append("------------------------------------------------------------\n")
+        return sb.toString()
     }
 
     private fun cleanAnsiCodes(rawText: String): String {

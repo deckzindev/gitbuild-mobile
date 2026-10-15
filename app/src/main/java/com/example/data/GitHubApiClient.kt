@@ -368,16 +368,16 @@ class GitHubApiClient {
         owner: String,
         repo: String,
         jobId: Long
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<String?> = withContext(Dispatchers.IO) {
         runCatching {
             val url = "https://api.github.com/repos/$owner/$repo/actions/jobs/$jobId/logs"
             val request = baseRequestBuilder(token, url).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    // Logs might not be ready yet if job is just starting
-                    return@runCatching "Aguardando inicialização dos logs pelo GitHub Actions (HTTP ${response.code})..."
+                    // 404 is normal while GitHub Actions is still executing the job
+                    return@runCatching null
                 }
-                response.body?.string() ?: ""
+                response.body?.string()
             }
         }
     }
