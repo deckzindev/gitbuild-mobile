@@ -1,0 +1,6 @@
+{
+  "name": "GitBuilder",
+  "description": "Compila projetos Android na nuvem via GitHub Actions a partir de arquivos ZIP e gera APKs reais.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
